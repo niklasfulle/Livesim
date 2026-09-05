@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+out/
+dist/
+
+# Test and coverage output
+coverage/
+
+# SonarQube scanner output
+.scannerwork/
+
+# Runtime data and local logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.idea/
+.vscode/
+*.swp

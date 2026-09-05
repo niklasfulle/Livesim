@@ -1,0 +1,29 @@
+{
+  "name": "lifesim",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A scalable desktop life simulation.",
+  "main": "out/main/main/main.js",
+  "scripts": {
+    "test": "vitest run --root . --configLoader runner --exclude out/**",
+    "test:watch": "vitest --root . --configLoader runner --exclude out/**",
+    "test:coverage": "vitest run --root . --configLoader runner --exclude out/** --coverage",
+    "typecheck": "tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.renderer.json",
+    "build": "pnpm build:renderer && pnpm build:main",
+    "build:renderer": "vite build --configLoader runner",
+    "build:main": "tsc -p tsconfig.main.json",
+    "dev": "concurrently -k \"vite --host 127.0.0.1 --configLoader runner\" \"tsc -p tsconfig.main.json --watch\" \"wait-on http://127.0.0.1:5173 out/main/main/main.js && electron .\""
+  },
+  "devDependencies": {
+    "@sonar/scan": "^5.0.0",
+    "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "concurrently": "^9.1.2",
+    "electron": "^37.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0",
+    "vitest": "^3.2.4",
+    "wait-on": "^8.0.2"
+  },
+  "packageManager": "pnpm@11.25.0+sha512.5cde925b4f075f725eb71fbae18a42ffe784524789f19b61c731cb8721ec28aaee160e01a8d5af4fedb2a42cdbf300efe23db356b0d4a17b4d63e11f8ab7c956"
+}
