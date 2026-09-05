@@ -14,6 +14,7 @@ coverage/
 
 # Runtime data and local logs
 logs/
+saves/
 *.log
 
 # Temporary files

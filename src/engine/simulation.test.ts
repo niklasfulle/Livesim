@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { SimulationEngine } from "./simulation.js";
 
 describe("SimulationEngine", () => {
+  it("restores a saved simulation without losing world or resident state", () => {
+    const simulation = SimulationEngine.start({
+      map: "GGW\nGGG",
+      residents: [{ id: "nia", name: "Nia", position: { x: 0, y: 0 } }],
+      random: () => 0
+    });
+    for (let tick = 0; tick < 4; tick += 1) simulation.advance();
+
+    const restored = SimulationEngine.fromSave(simulation.save(), () => 0);
+
+    expect(restored.snapshot()).toEqual(simulation.snapshot());
+  });
+
   it("advances the life cycle one tick at a time and accepts a donated meal", () => {
     const simulation = SimulationEngine.start({
       map: "GF\nGW",
@@ -130,6 +143,18 @@ describe("SimulationEngine", () => {
     expect(simulation.snapshot().residents[0].fitness).toBeGreaterThan(75);
   });
 
+  it("tracks hydration as part of survival", () => {
+    const simulation = SimulationEngine.start({
+      map: "G",
+      residents: [{ id: "nia", name: "Nia", position: { x: 0, y: 0 } }]
+    });
+
+    expect(simulation.snapshot().residents[0].hydration).toBe(100);
+    simulation.advance();
+
+    expect(simulation.snapshot().residents[0].hydration).toBeLessThan(100);
+  });
+
   it("uses a meal before berries and only restores five fitness from a berry", () => {
     const berryOnly = SimulationEngine.start({
       map: "G",
@@ -164,7 +189,10 @@ describe("SimulationEngine", () => {
     expect(resident.knownTrees).toEqual([]);
     expect(resident.log).toEqual(expect.arrayContaining([
       expect.objectContaining({ message: "Wasser bei 2/0 entdeckt." }),
-      expect.objectContaining({ message: "Fisch gefangen." })
+      expect.objectContaining({
+        message: "Fisch gefangen.",
+        resourceChange: { action: "collected", kind: "fish", amount: 1 }
+      })
     ]));
   });
 
@@ -175,6 +203,39 @@ describe("SimulationEngine", () => {
     });
 
     expect(simulation.snapshot().residents[0].knownWaters).toEqual([{ x: 5, y: 3 }]);
+  });
+
+  it("approaches a known water source before a competing berry bush", () => {
+    const simulation = SimulationEngine.start({
+      map: "GGGBGGG\nGGGGGGG\nGGGGGWG\nGGGGGGG\nGGGGGGG",
+      residents: [{ id: "kai", name: "Kai", position: { x: 2, y: 2 } }],
+      random: () => 0
+    });
+
+    simulation.advance();
+    simulation.advance();
+    simulation.advance();
+
+    expect(simulation.snapshot().residents[0]).toMatchObject({
+      position: { x: 3, y: 2 },
+      knownWaters: [{ x: 5, y: 2 }]
+    });
+  });
+
+  it("keeps exploration direction stable regardless of action randomness", () => {
+    const create = (random: () => number) => SimulationEngine.start({
+      map: "GGGGGG\nGGGGGG\nGGGGGG",
+      residents: [{ id: "kai", name: "Kai", position: { x: 1, y: 1 } }],
+      random
+    });
+    const first = create(() => 0);
+    const second = create(() => 1);
+    for (let tick = 0; tick < 8; tick += 1) {
+      first.advance();
+      second.advance();
+    }
+
+    expect(first.snapshot().residents[0].position).toEqual(second.snapshot().residents[0].position);
   });
 
   it("replaces a farther remembered water source with one closer to home", () => {
@@ -235,7 +296,7 @@ describe("SimulationEngine", () => {
       { time: 3, day: 1, hour: 6, minute: 45, message: "Geht nach 1/0." },
       { time: 3, day: 1, hour: 6, minute: 45, message: "Wasser bei 2/0 entdeckt." },
       { time: 3, day: 1, hour: 6, minute: 45, message: "Beginnt zu fischen." },
-      { time: 4, day: 1, hour: 7, minute: 0, message: "Fisch gefangen." }
+      { time: 4, day: 1, hour: 7, minute: 0, message: "Fisch gefangen.", resourceChange: { action: "collected", kind: "fish", amount: 1 } }
     ]);
   });
 
@@ -451,6 +512,9 @@ describe("SimulationEngine", () => {
     simulation.advance();
 
     expect(simulation.snapshot().residents[0].homeInventory.fish).toBe(0);
+    expect(simulation.snapshot().residents[0].log).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: "Fisch ist verdorben." })
+    ]));
   });
 
   it("does not harvest beyond a resident's carrying capacity", () => {

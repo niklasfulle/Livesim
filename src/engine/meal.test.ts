@@ -14,6 +14,13 @@ describe("resident meals", () => {
     simulation.donateMeal("nia");
     simulation.advance();
 
-    expect(simulation.snapshot().residents[0].hunger).toBe(0);
+    const resident = simulation.snapshot().residents[0];
+    expect(resident.hunger).toBe(0);
+    expect(resident.log).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        message: "Mahlzeit gegessen (vollständig satt).",
+        resourceChange: { action: "consumed", kind: "meal", amount: 1 }
+      })
+    ]));
   });
 });

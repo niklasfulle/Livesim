@@ -10,6 +10,7 @@
     "test:coverage": "vitest run --root . --configLoader runner --exclude out/** --coverage",
     "typecheck": "tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.renderer.json",
     "build": "pnpm build:renderer && pnpm build:main",
+    "test:electron-worker": "pnpm run build:renderer && electron scripts/electron-worker-smoke.cjs",
     "build:renderer": "vite build --configLoader runner",
     "build:main": "tsc -p tsconfig.main.json",
     "dev": "concurrently -k \"vite --host 127.0.0.1 --configLoader runner\" \"tsc -p tsconfig.main.json --watch\" \"wait-on http://127.0.0.1:5173 out/main/main/main.js && electron .\""

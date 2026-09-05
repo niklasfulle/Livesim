@@ -8,6 +8,8 @@ const ACTION_TICKS_REQUIRED = 2;
 const RESOURCE_ACTION_SUCCESS_CHANCE = 0.65;
 const FITNESS_WORK_COST = 0.75;
 const NIGHT_FITNESS_RECOVERY = 2;
+const DAY_HYDRATION_LOSS = 0.4;
+const NIGHT_HYDRATION_LOSS = 0.1;
 const WAKE_FITNESS_RECOVERY = 0;
 const MEAL_FITNESS_RECOVERY = 25;
 const BERRY_FITNESS_RECOVERY = 5;
@@ -20,6 +22,13 @@ const RESOURCE_VISION_RADIUS = 3;
 const CARDINAL_DIRECTIONS: GridPoint[] = [
   { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 0, y: -1 }
 ];
+const RESOURCE_LABELS: Record<ResourceKind, string> = {
+  fish: "Fisch",
+  wood: "Holz",
+  plant: "Pflanze",
+  berry: "Beere",
+  meal: "Mahlzeit"
+};
 
 export type ResidentState = "sleeping" | "eating" | "working" | "returning" | "dead";
 export type DayPhase = "dawn" | "day" | "dusk" | "night";
@@ -53,6 +62,11 @@ export interface ResidentLogEntry {
   hour: number;
   minute: number;
   message: string;
+  resourceChange?: {
+    action: "collected" | "consumed";
+    kind: ResourceKind;
+    amount: number;
+  };
 }
 
 export interface ResidentSnapshot extends ResidentSeed {
@@ -65,6 +79,7 @@ export interface ResidentSnapshot extends ResidentSeed {
   state: ResidentState;
   fitness: number;
   hunger: number;
+  hydration: number;
   health: number;
   meals: number;
   inventory: InventorySnapshot;
@@ -80,6 +95,19 @@ export interface SimulationSnapshot {
   clock: SimulationClock;
   world: Patch[][];
   residents: ResidentSnapshot[];
+}
+
+export interface SimulationSave {
+  version: 1;
+  time: number;
+  elapsedMinutes: number;
+  world: Patch[][];
+  residents: Array<ResidentSnapshot & {
+    items: Array<{ kind: ResourceKind; collectedAt: number }>;
+    homeItems: Array<{ kind: ResourceKind; collectedAt: number }>;
+    explored: string[];
+    avoidedResources: Array<[string, number]>;
+  }>;
 }
 
 export interface SimulationClock {
@@ -138,6 +166,7 @@ export class SimulationEngine {
         state: "sleeping" as const,
         fitness: 70,
         hunger: 30,
+        hydration: 100,
         health: 100,
         meals: items.filter((item) => item.kind === "meal").length,
         inventory: SimulationEngine.inventoryFor(items),
@@ -154,6 +183,33 @@ export class SimulationEngine {
     });
     const simulation = new SimulationEngine(world, residents, options.random ?? Math.random);
     simulation.residents.forEach((resident) => simulation.discoverNearbyResources(resident));
+    return simulation;
+  }
+
+  public static fromSave(save: SimulationSave, random = Math.random): SimulationEngine {
+    if (save.version !== 1) throw new RangeError("Unsupported simulation save version");
+    const world = World.fromSnapshot(save.world, save.residents.map((resident) => resident.home));
+    const residents = save.residents.map((resident) => ({
+      ...resident,
+      position: { ...resident.position },
+      home: { ...resident.home },
+      activityTarget: resident.activityTarget === undefined ? undefined : { ...resident.activityTarget },
+      actionProgress: { ...resident.actionProgress },
+      inventory: { ...resident.inventory },
+      homeInventory: { ...resident.homeInventory },
+      hydration: resident.hydration ?? 100,
+      knownWaters: resident.knownWaters.map((point) => ({ ...point })),
+      knownTrees: resident.knownTrees.map((point) => ({ ...point })),
+      knownBerryBushes: resident.knownBerryBushes.map((point) => ({ ...point })),
+      log: resident.log.map((entry) => ({ ...entry, resourceChange: entry.resourceChange === undefined ? undefined : { ...entry.resourceChange } })),
+      items: resident.items.map((item) => ({ ...item })),
+      homeItems: resident.homeItems.map((item) => ({ ...item })),
+      explored: new Set(resident.explored),
+      avoidedResources: new Map(resident.avoidedResources)
+    }));
+    const simulation = new SimulationEngine(world, residents, random);
+    simulation.time = save.time;
+    simulation.elapsedMinutes = save.elapsedMinutes;
     return simulation;
   }
 
@@ -199,6 +255,7 @@ export class SimulationEngine {
         state: resident.state,
         fitness: resident.fitness,
         hunger: resident.hunger,
+        hydration: resident.hydration,
         health: resident.health,
         meals: resident.meals,
         satisfaction: resident.satisfaction,
@@ -210,73 +267,54 @@ export class SimulationEngine {
     };
   }
 
+  public save(): SimulationSave {
+    const snapshot = this.snapshot();
+    return {
+      version: 1,
+      time: this.time,
+      elapsedMinutes: this.elapsedMinutes,
+      world: this.world.snapshot(),
+      residents: this.residents.map((resident, index) => ({
+        ...snapshot.residents[index],
+        items: resident.items.map((item) => ({ ...item })),
+        homeItems: resident.homeItems.map((item) => ({ ...item })),
+        explored: [...resident.explored],
+        avoidedResources: [...resident.avoidedResources.entries()]
+      }))
+    };
+  }
+
   private advanceResident(resident: Resident, clock: SimulationClock): void {
     if (resident.state === "dead") return;
-    const previousHunger = resident.hunger;
-    resident.hunger = Math.min(100, resident.hunger + (clock.phase === "night" ? 0.2 : 0.8));
-    if (previousHunger < 50 && resident.hunger >= 50) this.appendLog(resident, "Hat Hunger und sucht Nahrung.");
-    if (previousHunger < 100 && resident.hunger === 100) this.appendLog(resident, "Verhungert: Gesundheit sinkt ohne Nahrung.");
-    if (resident.hunger >= 100) resident.health = Math.max(0, resident.health - 1.5);
-    else if (resident.hunger < 50 && resident.state === "sleeping") resident.health = Math.min(100, resident.health + 0.5);
-    if (resident.fitness <= 0 && resident.state !== "sleeping") resident.health = Math.max(0, resident.health - 0.5);
-    if (resident.health === 0) {
-      this.cancelAction(resident);
-      resident.state = "dead";
-      this.appendLog(resident, "Ist gestorben.");
-      return;
-    }
-    if (resident.hunger >= 50 && this.eatAvailableFood(resident)) {
-      this.cancelAction(resident);
-      return;
-    }
-    if (this.atHome(resident) && resident.state === "returning") {
-      this.storeAtHome(resident);
-      if (this.cookIfPossible(resident)) this.appendLog(resident, "Mahlzeit gekocht.");
-      resident.state = "sleeping";
-    }
-    if (clock.phase === "night") {
-      this.cancelAction(resident);
-      if (!this.atHome(resident)) {
-        if (resident.state !== "returning") this.appendLog(resident, "Kehrt nach Hause zurück.");
-        resident.state = "returning";
-        this.moveTowardsHome(resident);
-        return;
-      }
-      this.storeAtHome(resident);
-      resident.state = "sleeping";
-      this.recoverFitness(resident, NIGHT_FITNESS_RECOVERY);
-      return;
-    }
-    if (resident.state === "sleeping") {
-      if (clock.phase === "dusk" || resident.fitness < 60) {
-        this.recoverFitness(resident, NIGHT_FITNESS_RECOVERY);
-        return;
-      }
-      this.recoverFitness(resident, WAKE_FITNESS_RECOVERY);
-      resident.state = "eating";
-      this.appendLog(resident, "Wacht auf.");
-      return;
-    }
-    if (resident.state === "eating") {
-      if (this.cookIfPossible(resident)) this.appendLog(resident, "Mahlzeit gekocht.");
-      this.eatAvailableFood(resident);
-      this.packProvisions(resident);
-      resident.state = "working";
-      this.appendLog(resident, "Beginnt zu arbeiten.");
-      return;
-    }
-    const readyToCook = ["fish", "wood", "plant"].every((kind) => this.hasResource(resident, kind as ResourceKind));
-    if (resident.state === "working" && (clock.phase === "dusk" || resident.fitness < MIN_FITNESS_FOR_WORK + this.distanceFromHome(resident, resident.position) * 0.4 || resident.items.length >= carryingCapacity || readyToCook)) {
+    if (this.updateNeedsAndHealth(resident, clock)) return;
+    if (this.handleUrgentMeal(resident)) return;
+    this.settleReturningResident(resident);
+    if (this.handleNight(resident, clock)) return;
+    if (this.handleRestAndMeals(resident, clock)) return;
+    if (this.handleReturnJourney(resident, clock)) return;
+    this.handleWork(resident);
+  }
+
+  private handleUrgentMeal(resident: Resident): boolean {
+    if (resident.hunger < 50 || !this.eatAvailableFood(resident)) return false;
+    this.cancelAction(resident);
+    return true;
+  }
+
+  private handleReturnJourney(resident: Resident, clock: SimulationClock): boolean {
+    if (this.shouldReturnFromWork(resident, clock)) {
       this.cancelAction(resident);
       resident.state = "returning";
       this.appendLog(resident, "Kehrt nach Hause zurück.");
-      return;
+      return true;
     }
-    if (resident.state === "returning") {
-      this.moveTowardsHome(resident);
-      if (this.atHome(resident)) resident.state = "sleeping";
-      return;
-    }
+    if (resident.state !== "returning") return false;
+    this.moveTowardsHome(resident);
+    if (this.atHome(resident)) resident.state = "sleeping";
+    return true;
+  }
+
+  private handleWork(resident: Resident): void {
     if (resident.activity === "idle") {
       this.moveForWork(resident);
       this.startResourceAction(resident);
@@ -284,6 +322,96 @@ export class SimulationEngine {
       this.continueResourceAction(resident);
     }
     resident.fitness = Math.max(0, resident.fitness - FITNESS_WORK_COST);
+  }
+
+  private updateNeedsAndHealth(resident: Resident, clock: SimulationClock): boolean {
+    const previousHealth = resident.health;
+    this.updateHunger(resident, clock);
+    this.updateHydration(resident, clock);
+    this.updateHealthFromNeeds(resident);
+    if (previousHealth > 25 && resident.health <= 25 && resident.health > 0) this.appendLog(resident, "Gesundheit kritisch.");
+    if (resident.health === 0) {
+      this.cancelAction(resident);
+      resident.state = "dead";
+      this.appendLog(resident, "Ist gestorben.");
+      return true;
+    }
+    return false;
+  }
+
+  private updateHunger(resident: Resident, clock: SimulationClock): void {
+    const previousHunger = resident.hunger;
+    resident.hunger = Math.min(100, resident.hunger + (clock.phase === "night" ? 0.2 : 0.8));
+    if (previousHunger < 50 && resident.hunger >= 50) this.appendLog(resident, "Hat Hunger und sucht Nahrung.");
+    if (previousHunger < 100 && resident.hunger === 100) this.appendLog(resident, "Verhungert: Gesundheit sinkt ohne Nahrung.");
+  }
+
+  private updateHydration(resident: Resident, clock: SimulationClock): void {
+    resident.hydration = Math.max(0, resident.hydration - (clock.phase === "night" ? NIGHT_HYDRATION_LOSS : DAY_HYDRATION_LOSS));
+    if (this.isAdjacentToWater(resident.position)) {
+      const needed = resident.hydration < 95;
+      resident.hydration = 100;
+      if (needed) this.appendLog(resident, "Trinkt Wasser.");
+    }
+  }
+
+  private updateHealthFromNeeds(resident: Resident): void {
+    if (resident.hunger >= 100) resident.health = Math.max(0, resident.health - 1.5);
+    else if (resident.hunger < 50 && resident.state === "sleeping") resident.health = Math.min(100, resident.health + 0.5);
+    if (resident.hydration === 0) resident.health = Math.max(0, resident.health - 1);
+    if (resident.fitness <= 0 && resident.state !== "sleeping") resident.health = Math.max(0, resident.health - 0.5);
+  }
+
+  private settleReturningResident(resident: Resident): void {
+    if (this.atHome(resident) && resident.state === "returning") {
+      this.storeAtHome(resident);
+      if (this.cookIfPossible(resident)) this.appendLog(resident, "Mahlzeit gekocht.");
+      resident.state = "sleeping";
+    }
+  }
+
+  private handleNight(resident: Resident, clock: SimulationClock): boolean {
+    if (clock.phase !== "night") return false;
+    this.cancelAction(resident);
+    if (!this.atHome(resident)) {
+      if (resident.state !== "returning") this.appendLog(resident, "Kehrt nach Hause zurück.");
+      resident.state = "returning";
+      this.moveTowardsHome(resident);
+      return true;
+    }
+    this.storeAtHome(resident);
+    resident.state = "sleeping";
+    this.recoverFitness(resident, NIGHT_FITNESS_RECOVERY);
+    return true;
+  }
+
+  private handleRestAndMeals(resident: Resident, clock: SimulationClock): boolean {
+    if (resident.state === "sleeping") {
+      if (clock.phase === "dusk" || resident.fitness < 60) {
+        this.recoverFitness(resident, NIGHT_FITNESS_RECOVERY);
+        return true;
+      }
+      this.recoverFitness(resident, WAKE_FITNESS_RECOVERY);
+      resident.state = "eating";
+      this.appendLog(resident, "Wacht auf.");
+      return true;
+    }
+    if (resident.state !== "eating") return false;
+    if (this.cookIfPossible(resident)) this.appendLog(resident, "Mahlzeit gekocht.");
+    this.eatAvailableFood(resident);
+    this.packProvisions(resident);
+    resident.state = "working";
+    this.appendLog(resident, "Beginnt zu arbeiten.");
+    return true;
+  }
+
+  private shouldReturnFromWork(resident: Resident, clock: SimulationClock): boolean {
+    if (resident.state !== "working") return false;
+    const readyToCook = ["fish", "wood", "plant"].every((kind) => this.hasResource(resident, kind as ResourceKind));
+    return clock.phase === "dusk"
+      || resident.fitness < MIN_FITNESS_FOR_WORK + this.distanceFromHome(resident, resident.position) * 0.4
+      || resident.items.length >= carryingCapacity
+      || readyToCook;
   }
 
   private startResourceAction(resident: Resident): void {
@@ -310,16 +438,17 @@ export class SimulationEngine {
     const resource = target !== undefined && actionSucceeds
       ? this.world.harvest(target)
       : undefined;
-    if (resource !== undefined) {
-      resident.items.push({ kind: resource, collectedAt: this.elapsedMinutes });
-      this.syncInventory(resident);
-      this.appendLog(resident, this.gatheringMessage(resource));
-      this.discoverNearbyResources(resident);
-    } else {
-      if (target !== undefined && !this.world.isWalkable(target)) {
-        resident.avoidedResources.set(SimulationEngine.pointKey(target), this.time + RESOURCE_BYPASS_TICKS);
+    if (resource === undefined) {
+      if (target !== undefined) {
+        const targetIsBlocked = this.world.isWalkable(target) === false;
+        if (targetIsBlocked) resident.avoidedResources.set(SimulationEngine.pointKey(target), this.time + RESOURCE_BYPASS_TICKS);
       }
       this.appendLog(resident, resident.activity === "fishing" ? "Fangversuch fehlgeschlagen." : "Ernteversuch fehlgeschlagen.");
+    } else {
+      resident.items.push({ kind: resource, collectedAt: this.elapsedMinutes });
+      this.syncInventory(resident);
+      this.appendLog(resident, this.gatheringMessage(resource), { action: "collected", kind: resource, amount: 1 });
+      this.discoverNearbyResources(resident);
     }
     this.cancelAction(resident);
   }
@@ -352,8 +481,10 @@ export class SimulationEngine {
 
   private discardSpoiledResources(resident: Resident): void {
     const isUsable = (item: StoredResource): boolean => this.elapsedMinutes - item.collectedAt < shelfLifeHours[item.kind] * 60;
+    const spoiled = [...resident.items, ...resident.homeItems].filter((item) => !isUsable(item));
     resident.items = resident.items.filter(isUsable);
     resident.homeItems = resident.homeItems.filter(isUsable);
+    spoiled.forEach((item) => this.appendLog(resident, `${RESOURCE_LABELS[item.kind]} ist verdorben.`));
     this.syncInventory(resident);
     this.syncHomeInventory(resident);
   }
@@ -381,17 +512,21 @@ export class SimulationEngine {
   private eatAvailableFood(resident: Resident): boolean {
     if (resident.hunger < 30) return false;
     if (this.atHome(resident) && this.cookIfPossible(resident)) this.appendLog(resident, "Mahlzeit gekocht.");
-    if (this.consumeOldest(resident, "meal")) {
+    const mealCount = resident.items.filter((item) => item.kind === "meal").length
+      + resident.homeItems.filter((item) => item.kind === "meal").length;
+    const keepLastMeal = !this.atHome(resident) && mealCount === 1 && resident.hunger < 80;
+    // Keep the last field ration for a genuine emergency while travelling.
+    if (!keepLastMeal && this.consumeOldest(resident, "meal")) {
       resident.hunger = 0;
       this.recoverFitness(resident, MEAL_FITNESS_RECOVERY);
       resident.satisfaction += 1;
-      this.appendLog(resident, "Mahlzeit gegessen (vollständig satt).");
+      this.appendLog(resident, "Mahlzeit gegessen (vollständig satt).", { action: "consumed", kind: "meal", amount: 1 });
       return true;
     }
     if (this.consumeOldest(resident, "berry")) {
       resident.hunger = Math.max(0, resident.hunger - 15);
       this.recoverFitness(resident, BERRY_FITNESS_RECOVERY);
-      this.appendLog(resident, "Beere gegessen (−15 Hunger).");
+      this.appendLog(resident, "Beere gegessen (+15 Sättigung).", { action: "consumed", kind: "berry", amount: 1 });
       return true;
     }
     return false;
@@ -440,7 +575,7 @@ export class SimulationEngine {
         resident.facing = this.directionFor(resourceDirection);
         return;
       }
-      const explorationDirections = this.explorationDirections();
+      const explorationDirections = this.explorationDirections(resident);
       const direction = explorationDirections.find(({ x, y }) => {
         const candidate = { x: resident.position.x + x, y: resident.position.y + y };
         return this.world.isWalkable(candidate) && !resident.explored.has(SimulationEngine.pointKey(candidate));
@@ -454,8 +589,11 @@ export class SimulationEngine {
   private moveTowardsKnownResource(resident: Resident): boolean {
     if (resident.items.length >= carryingCapacity) return false;
     const desiredResources: GridPoint[][] = [];
+    // Fishing is the most reliable protein source. Once a water location is
+    // known, approach it before opportunistic berry gathering so residents do
+    // not get trapped circling bushes while their fish supply is empty.
+    if (!this.hasResource(resident, "fish") || resident.hydration < 40) desiredResources.push(this.availableKnownResources(resident, resident.knownWaters, "water"));
     if (resident.hunger >= 50 && !resident.items.some((item) => item.kind === "berry" || item.kind === "meal")) desiredResources.push(this.availableKnownResources(resident, resident.knownBerryBushes, "berryBush"));
-    if (!this.hasResource(resident, "fish")) desiredResources.push(this.availableKnownResources(resident, resident.knownWaters, "water"));
     if (!this.hasResource(resident, "wood")) desiredResources.push(this.availableKnownResources(resident, resident.knownTrees, "forest"));
     if (!this.hasResource(resident, "berry")) desiredResources.push(this.availableKnownResources(resident, resident.knownBerryBushes, "berryBush"));
 
@@ -486,9 +624,20 @@ export class SimulationEngine {
     return false;
   }
 
-  private explorationDirections(): GridPoint[] {
-    const offset = Math.min(CARDINAL_DIRECTIONS.length - 1, Math.floor(this.random() * CARDINAL_DIRECTIONS.length));
-    return [...CARDINAL_DIRECTIONS.slice(offset), ...CARDINAL_DIRECTIONS.slice(0, offset)];
+  private explorationDirections(resident: Resident): GridPoint[] {
+    return CARDINAL_DIRECTIONS
+      .map((direction, index) => ({ direction, index, score: this.explorationScore(resident, direction) }))
+      .sort((left, right) => right.score - left.score || left.index - right.index)
+      .map(({ direction }) => direction);
+  }
+
+  private explorationScore(resident: Resident, direction: GridPoint): number {
+    const candidate = { x: resident.position.x + direction.x, y: resident.position.y + direction.y };
+    if (!this.world.isWalkable(candidate)) return Number.NEGATIVE_INFINITY;
+    // Prefer an unvisited adjacent patch; the stable cardinal tie-breaker
+    // prevents random oscillation while still allowing the frontier search
+    // below to route around obstacles.
+    return resident.explored.has(SimulationEngine.pointKey(candidate)) ? 0 : 8;
   }
 
   private explorationStep(resident: Resident, directions: GridPoint[]): GridPoint | undefined {
@@ -584,8 +733,7 @@ export class SimulationEngine {
       visited.add(key);
       queue.push({ point, firstStep: direction });
     }
-    for (let index = 0; index < queue.length; index += 1) {
-      const current = queue[index];
+    for (const current of queue) {
       for (const direction of directions) {
         const point = { x: current.point.x + direction.x, y: current.point.y + direction.y };
         const key = SimulationEngine.pointKey(point);
@@ -625,6 +773,13 @@ export class SimulationEngine {
 
   private isAdjacent(left: GridPoint, right: GridPoint): boolean {
     return Math.abs(left.x - right.x) + Math.abs(left.y - right.y) === 1;
+  }
+
+  private isAdjacentToWater(point: GridPoint): boolean {
+    return CARDINAL_DIRECTIONS.some((direction) =>
+      this.isInside({ x: point.x + direction.x, y: point.y + direction.y }, this.world.dimensions())
+      && this.world.patchAt({ x: point.x + direction.x, y: point.y + direction.y }).ground === "water"
+    );
   }
 
   private move(resident: Resident, movement: GridPoint): void {
@@ -702,9 +857,16 @@ export class SimulationEngine {
     return "Mahlzeit gesammelt.";
   }
 
-  private appendLog(resident: Resident, message: string): void {
+  private appendLog(resident: Resident, message: string, resourceChange?: ResidentLogEntry["resourceChange"]): void {
     const clock = this.clock();
-    resident.log.push({ time: this.time, day: clock.day, hour: clock.hour, minute: clock.minute, message });
+    resident.log.push({
+      time: this.time,
+      day: clock.day,
+      hour: clock.hour,
+      minute: clock.minute,
+      message,
+      ...(resourceChange === undefined ? {} : { resourceChange })
+    });
   }
 
   private static inventoryFor(items: StoredResource[]): InventorySnapshot {

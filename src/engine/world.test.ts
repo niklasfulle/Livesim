@@ -140,4 +140,16 @@ describe("World", () => {
     expect(berryBushes.length).toBeGreaterThan(0);
     expect(berryBushes.every((patch) => patch.stock === 50)).toBe(true);
   });
+
+  it("selects deterministic resident homes on grass only", () => {
+    const world = World.generate({ width: 40, height: 24, seed: 729 });
+
+    const homes = world.spawnPoints(4, 12345);
+    const repeated = world.spawnPoints(4, 12345);
+
+    expect(homes).toHaveLength(4);
+    expect(homes).toEqual(repeated);
+    expect(new Set(homes.map((home) => `${home.x}/${home.y}`)).size).toBe(4);
+    homes.forEach((home) => expect(world.patchAt(home).ground).toBe("grass"));
+  });
 });

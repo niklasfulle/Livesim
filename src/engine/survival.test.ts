@@ -8,6 +8,7 @@ describe("survival needs", () => {
     const resident = simulation.snapshot().residents[0];
     expect(resident.health).toBe(100);
     expect(resident.log.filter((entry) => entry.message.startsWith("Beere gegessen")).length).toBeGreaterThan(1);
+    expect(resident.log.find((entry) => entry.message.startsWith("Beere gegessen"))?.message).toBe("Beere gegessen (+15 Sättigung).");
   });
   it("returns to unexplored terrain after coming home on successive days", () => {
     const simulation = SimulationEngine.start({ map: `${"G".repeat(35)}W`, residents: [{ id: "nia", name: "Nia", position: { x: 0, y: 0 } }], random: () => 0 });
@@ -48,6 +49,10 @@ describe("survival needs", () => {
     const simulation = SimulationEngine.start({ map: "G", residents: [{ id: "nia", name: "Nia", position: { x: 0, y: 0 } }] });
     for (let tick = 0; tick < 1200; tick += 1) simulation.advance();
     expect(simulation.snapshot().residents[0]).toMatchObject({ health: 0, state: "dead" });
+    expect(simulation.snapshot().residents[0].log).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: "Gesundheit kritisch." }),
+      expect.objectContaining({ message: "Ist gestorben." })
+    ]));
     simulation.advance();
     expect(simulation.snapshot().residents[0].state).toBe("dead");
   });

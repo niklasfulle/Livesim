@@ -1,5 +1,7 @@
 interface DesktopBridge {
   appVersion(): Promise<string>;
+  saveSimulation(save: unknown, slot?: "manual" | "autosave"): Promise<void>;
+  loadSimulation(slot?: "manual" | "autosave"): Promise<unknown | undefined>;
   writeResidentLog(log: {
     time: number;
     clock: { day: number; hour: number; minute: number; phase: string };

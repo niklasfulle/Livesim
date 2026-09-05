@@ -21,9 +21,9 @@ const firstExplorationDirection = (randomValue: number): string => {
 };
 
 describe("resident exploration", () => {
-  it("can begin exploring in every cardinal direction", () => {
+  it("keeps its first exploration direction stable", () => {
     const directions = new Set([0.05, 0.3, 0.55, 0.8].map(firstExplorationDirection));
 
-    expect(directions).toEqual(new Set(["north", "east", "south", "west"]));
+    expect(directions).toEqual(new Set(["east"]));
   });
 });

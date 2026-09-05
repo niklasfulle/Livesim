@@ -17,7 +17,10 @@ Im Mittelpunkt steht zunächst ein einzelner Bewohner, dessen Verhalten und Übe
 - mehrschrittige Abbauaktionen und fehlgeschlagene Angelversuche
 - Inventare für Bewohner und Haus
 - Kochen von Mahlzeiten sowie Verderben von Ressourcen
-- vollständiger Bewohnerlog in der Oberfläche und als lokale Datei
+- vollständige Bewohner-History mit gesammelten und konsumierten Ressourcen in der Oberfläche und als lokale Datei
+- Startmenü für neue Simulationen und das Fortsetzen gespeicherter Spielstände
+- Weltgenerator mit zufälliger Weltgenerierung und visueller Karten-Preview vor dem Start
+- Pausemenü per `Esc` mit Speichern, Fortsetzen und Rückkehr zum Startmenü
 - schwebende, minimalistische Benutzeroberfläche
 - Pixel-Art-Terrain und ausgerichtete Bewohner-Sprites
 - Detailansicht für Bewohner und Patches
@@ -58,6 +61,12 @@ pnpm dev
 ```
 
 Dabei werden der Vite-Entwicklungsserver, der TypeScript-Compiler und Electron gemeinsam gestartet.
+
+## Startmenü und Spielstände
+
+Beim Start erscheint ein Menü mit den Optionen „Neue Simulation“ und „Gespeicherte Simulation fortsetzen“. Mit `Esc` wird die laufende Simulation pausiert und das Pausemenü geöffnet. Dort kann der aktuelle Zustand gespeichert, fortgesetzt oder zum Startmenü zurückgekehrt werden.
+
+Spielstände werden lokal im Electron-Benutzerdatenverzeichnis unter `saves/lifesim.json` gespeichert und enthalten Welt, Ressourcenbestände, Bewohnerzustände, Inventare, Erinnerungen und History.
 
 ## Tests und Qualität
 

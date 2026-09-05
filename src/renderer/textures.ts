@@ -67,8 +67,10 @@ export const grassTexture = (patchX: number, patchY: number): TextureRect[] => {
     const random = variation(patchX, patchY, clump + 47);
     const x = ((random % 13) + 1) * 4;
     const y = ((Math.floor(random / 64) % 12) + 2) * 4;
-    texture.push({ color: "#3c6a3a", height: 8, width: 4, x, y });
-    texture.push({ color: "#afd17a", height: 4, width: 4, x: x + 4, y: y - 4 });
+    texture.push(
+      { color: "#3c6a3a", height: 8, width: 4, x, y },
+      { color: "#afd17a", height: 4, width: 4, x: x + 4, y: y - 4 }
+    );
   }
   return texture;
 };
@@ -90,8 +92,10 @@ export const treeTexture = (patchX: number, patchY: number, stock: number): Text
       y: crownTop + row * 8 + 8
     });
   });
-  texture.push({ color: "#3c261c", height: 44, part: "trunk", width: 16, x: 24, y: 24 });
-  texture.push({ color: "#75452b", height: 40, part: "trunk", width: 8, x: 28, y: 20 });
+  texture.push(
+    { color: "#3c261c", height: 44, part: "trunk", width: 16, x: 24, y: 24 },
+    { color: "#75452b", height: 40, part: "trunk", width: 8, x: 28, y: 20 }
+  );
   CROWN_ROW_WIDTHS.forEach((width, row) => {
     texture.push({
       color: CROWN_COLORS[Math.min(CROWN_COLORS.length - 1, Math.floor(row / 4))],
@@ -117,11 +121,15 @@ export const treeTexture = (patchX: number, patchY: number, stock: number): Text
       y: crownTop + row * 8
     });
   }
-  texture.push({ color: "#4a2d1f", height: 12, part: "trunk", width: 12, x: 26, y: 26 });
-  texture.push({ color: "#a2663c", height: 8, part: "trunk", width: 4, x: 30, y: 26 });
+  texture.push(
+    { color: "#4a2d1f", height: 12, part: "trunk", width: 12, x: 26, y: 26 },
+    { color: "#a2663c", height: 8, part: "trunk", width: 4, x: 30, y: 26 }
+  );
   if (stock < 300) {
-    texture.push({ color: "rgba(45, 31, 22, 0.48)", height: 16, part: "detail", width: 40, x: -16, y: 52 });
-    texture.push({ color: "rgba(45, 31, 22, 0.48)", height: 16, part: "detail", width: 32, x: 48, y: 68 });
+    texture.push(
+      { color: "rgba(45, 31, 22, 0.48)", height: 16, part: "detail", width: 40, x: -16, y: 52 },
+      { color: "rgba(45, 31, 22, 0.48)", height: 16, part: "detail", width: 32, x: 48, y: 68 }
+    );
   }
   return texture;
 };

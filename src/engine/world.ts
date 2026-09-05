@@ -34,8 +34,9 @@ export class World {
   private readonly patches: Patch[][];
   private readonly homes: GridPoint[] = [];
 
-  private constructor(patches: Patch[][]) {
+  private constructor(patches: Patch[][], homes: GridPoint[] = []) {
     this.patches = patches;
+    this.homes.push(...homes.map((home) => ({ ...home })));
   }
 
   public static fromAscii(source: string): World {
@@ -50,6 +51,13 @@ export class World {
     }
 
     return new World(lines.map((line) => [...line].map(World.patchFor)));
+  }
+
+  public static fromSnapshot(snapshot: Patch[][], homes: GridPoint[] = []): World {
+    if (snapshot.length === 0 || snapshot[0]?.length === 0 || snapshot.some((row) => row.length !== snapshot[0].length)) {
+      throw new IllegalMapSpecificationError("world snapshot must be rectangular");
+    }
+    return new World(snapshot.map((row) => row.map((patch) => ({ ...patch }))), homes);
   }
 
   public static generate(options: WorldGenerationOptions): World {
@@ -103,8 +111,9 @@ export class World {
         const x = 3 + Math.floor(random() * (options.width - 6));
         const y = 3 + Math.floor(random() * (options.height - 6));
         const lakeCoordinates = World.lakeCoordinates(x, y);
-        if (lakeCoordinates.some((point) => patches[point.y][point.x].ground === "water")) continue;
+        if (!World.canPlaceLake(patches, lakeCoordinates)) continue;
         lakeCoordinates.forEach((point) => { patches[point.y][point.x] = { ground: "water", stock: 100 }; });
+        World.clearSandAroundLake(patches, lakeCoordinates);
         break;
       }
     }
@@ -115,6 +124,24 @@ export class World {
       .flatMap((offsetY) => Array.from({ length: 7 }, (_, column) => column - 3)
         .filter((offsetX) => offsetX ** 2 + offsetY ** 2 <= 9)
         .map((offsetX) => ({ x: centerX + offsetX, y: centerY + offsetY })));
+  }
+
+  private static canPlaceLake(patches: Patch[][], coordinates: GridPoint[]): boolean {
+    return coordinates.every((point) => patches[point.y]?.[point.x]?.ground === "grass");
+  }
+
+  private static clearSandAroundLake(patches: Patch[][], coordinates: GridPoint[]): void {
+    coordinates.forEach((point) => {
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+          const neighbour = patches[point.y + offsetY]?.[point.x + offsetX];
+          if (neighbour?.ground === "sand") {
+            neighbour.ground = "grass";
+            neighbour.stock = 100;
+          }
+        }
+      }
+    });
   }
 
   private static addTrees(patches: Patch[][], options: WorldGenerationOptions, random: () => number): void {
@@ -189,6 +216,20 @@ export class World {
   public isWalkable(point: GridPoint): boolean {
     const ground = this.patches[point.y]?.[point.x]?.ground;
     return ground !== undefined && ground !== "water" && ground !== "forest" && ground !== "berryBush";
+  }
+
+  /** Returns unique, deterministic home candidates on clear grassland. */
+  public spawnPoints(count: number, seed: number): GridPoint[] {
+    if (!Number.isInteger(count) || count < 0) throw new RangeError("Spawn count must be a non-negative integer");
+    const candidates = this.patches.flatMap((row, y) => row.flatMap((patch, x) =>
+      patch.ground === "grass" ? [{ x, y }] : []
+    ));
+    const random = World.randomFrom(seed);
+    for (let index = candidates.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(random() * (index + 1));
+      [candidates[index], candidates[swapIndex]] = [candidates[swapIndex], candidates[index]];
+    }
+    return candidates.slice(0, count).map((point) => ({ ...point }));
   }
 
   public snapshot(): Patch[][] {
